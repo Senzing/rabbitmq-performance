@@ -9,7 +9,7 @@ Queue Name: senzing-dlx-queue
 durable: yes
 
 Exchange Name: senzing-dlx-exchange
-Record Key: senzing.deadletter
+Routing Key: senzing.deadletter
 ```
 
 ## Setup the main input data exchange
@@ -18,10 +18,10 @@ Queue Name: senzing-rabbitmq-queue
 max-length: 50,000
 overflow: reject-publish
 DLX Exchange Name: senzing-dlx-exchange
-DLX Record Key: senzing.deadletter
+DLX Routing Key: senzing.deadletter
 
 Exchange Name: senzing-rabbitmq-exchange
-Record Key: senzing.records
+Routing Key: senzing.records
 ```
 
 
