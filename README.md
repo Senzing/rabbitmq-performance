@@ -15,7 +15,7 @@ Routing Key: senzing.deadletter
 ## Setup the main input data exchange
 ```
 Queue Name: senzing-rabbitmq-queue
-max-length: 50,000
+max-length: 50000
 overflow: reject-publish
 DLX Exchange Name: senzing-dlx-exchange
 DLX Routing Key: senzing.deadletter
