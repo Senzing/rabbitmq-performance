@@ -11,6 +11,8 @@ permissions:
 
 jobs:
   add-issue-labels:
+    permissions:
+      issues: write
     secrets:
       ORG_MEMBERSHIP_TOKEN: ${{ secrets.ORG_MEMBERSHIP_TOKEN }}
       SENZING_MEMBERS: ${{ secrets.SENZING_MEMBERS }}
