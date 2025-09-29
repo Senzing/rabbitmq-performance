@@ -6,8 +6,7 @@ on:
       - opened
       - reopened
 
-permissions:
-  issues: write
+permissions: {}
 
 jobs:
   add-issue-labels:
