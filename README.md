@@ -4,13 +4,13 @@ Configuration and tuning recommendations for RabbitMQ when used with Senzing.
 
 ## Overview
 
-RabbitMQ performs best when queues are shallow. At Senzing, we've observed severe bottlenecks when queues grow to 40M+ messages as RabbitMQ struggles to manage the index overhead. Use RabbitMQ as a **buffer**, not deep storage—if you need to queue hundreds of millions of messages, consider a system designed for that (e.g., NATS JetStream, Pulsar, or SQS).
+RabbitMQ performs best when queues are shallow. At Senzing, we've observed severe bottlenecks when queues grow to 40M+ messages as RabbitMQ struggles to manage the index overhead. Use RabbitMQ as a **buffer**, not deep storage—if you need to queue hundreds of millions of messages, consider a system designed for that (e.g., NATS JetStream, Pulsar, or AWS SQS).
 
 ## Broker Configuration
 
 ### Consumer Timeout
 
-RabbitMQ's default `consumer_timeout` (30 minutes in recent versions) will close connections if a message takes too long to acknowledge. This can happen with huge entities or during PostgreSQL XID pauses.
+RabbitMQ's default `consumer_timeout` (30 minutes in recent versions) will close connections if a message takes too long to acknowledge. This can happen with huge entities.
 
 For Senzing workloads with variable processing times, increase or disable this limit:
 ```ini
@@ -68,42 +68,70 @@ RabbitMQ performance degrades significantly with deep queues. This cap keeps the
 
 ### Prefetch
 
-For multi-threaded consumers, set prefetch to **2x your thread count**:
+For multi-threaded consumers, set prefetch to match your thread count:
 ```python
-channel.basic_qos(prefetch_count=num_threads * 2)
+ch.basic_qos(prefetch_count=num_threads)
 ```
-
-This ensures a message is always queued locally when a thread completes, eliminating broker round-trip latency between tasks.
-
-| Prefetch Setting | Result |
-|------------------|--------|
-| Too low | Threads starve waiting for messages |
-| Too high | One consumer hogs messages; increases redelivery volume if consumer dies |
-| 2x threads | Optimal throughput with controlled buffering |
 
 ### Threading Pattern
 
 Use an executor pool for parallel processing, but **ack from the main thread only**:
 ```
-1. Main thread: fetch messages (basic_consume)
-2. Executor pool: process messages in parallel  
-3. Main thread: ack on future completion callback
+1. Main thread: fetch messages via consume() with inactivity_timeout
+2. Executor pool: submit processing tasks
+3. Main thread: poll futures, ack/reject on completion
 ```
 
 This avoids Pika thread-safety issues and keeps the channel state consistent.
 ```python
-# Example pattern (Pika)
-executor = ThreadPoolExecutor(max_workers=num_threads)
-
-def on_message(channel, method, properties, body):
-    future = executor.submit(process_message, body)
-    future.add_done_callback(
-        lambda f: channel.basic_ack(delivery_tag=method.delivery_tag)
-    )
-
-channel.basic_qos(prefetch_count=num_threads * 2)
-channel.basic_consume(queue='senzing-rabbitmq-queue', on_message_callback=on_message)
+with concurrent.futures.ThreadPoolExecutor(max_workers) as executor:
+    ch.basic_qos(prefetch_count=max_workers)
+    futures = {}
+    
+    while True:
+        # Poll for completed work
+        done, _ = concurrent.futures.wait(
+            futures, timeout=10, return_when=concurrent.futures.FIRST_COMPLETED
+        )
+        
+        for fut in done:
+            msg = futures.pop(fut)
+            try:
+                fut.result()
+                ch.basic_ack(msg.delivery_tag)
+            except (SzBadInputError, SzRetryTimeoutExceededError):
+                ch.basic_reject(msg.delivery_tag, requeue=False)  # -> DLQ
+        
+        # Fetch more work
+        while len(futures) < max_workers:
+            msg = next(ch.consume(queue, inactivity_timeout=10))
+            if not msg or not msg[0]:
+                break
+            futures[executor.submit(process, msg)] = msg
 ```
+
+### Long Record Handling
+
+Records that take too long to process should be rejected to the DLQ to prevent blocking other work and to avoid `consumer_timeout` disconnects.
+```python
+LONG_RECORD = 300      # 5 minutes - log warning
+REJECT_THRESHOLD = 600 # 10 minutes - reject to DLQ
+
+for fut, msg in futures.items():
+    if not fut.done():
+        duration = time.time() - msg.start_time
+        if duration > REJECT_THRESHOLD and not msg.acked:
+            ch.basic_reject(msg.delivery_tag, requeue=False)
+            msg.acked = True  # mark so we don't double-ack later
+        elif duration > LONG_RECORD:
+            print(f"Still processing ({duration/60:.1f} min): {msg.record_id}")
+```
+
+This pattern:
+- Warns about slow records at 5 minutes
+- Rejects to DLQ at 10 minutes
+- Prevents double-ack/reject by tracking state
+- Keeps threads from stalling on one slow record
 
 ## Producer Considerations
 
@@ -116,14 +144,20 @@ When `overflow: reject-publish` triggers, the broker will NACK new publishes. Pr
 channel.confirm_delivery()
 
 try:
-    channel.basic_publish(exchange='senzing-rabbitmq-exchange',
-                          routing_key='senzing.records',
-                          body=message,
-                          mandatory=True)
+    channel.basic_publish(
+        exchange='senzing-rabbitmq-exchange',
+        routing_key='senzing.records',
+        body=message,
+        mandatory=True
+    )
 except pika.exceptions.NackError:
     # Queue full—backoff and retry
     time.sleep(backoff_seconds)
 ```
+
+## Reference Implementation
+
+See [sz_rabbit_consumer](https://github.com/brianmacy/sz_rabbit_consumer-v4) for a complete example implementing these patterns.
 
 ## References
 
