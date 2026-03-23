@@ -6,12 +6,13 @@
     "CODEOWNER",
     "cooldown",
     "deadletter",
-    "esbenp",
     "ICLA",
     "kernelsam",
     "rabbitmq",
     "Senzing",
     "stackoverflow"
   ],
-  "ignorePaths": [".git/**"]
+  "ignorePaths": [
+    ".git/**"
+  ]
 }
