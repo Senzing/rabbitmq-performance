@@ -2,12 +2,17 @@
   "version": "0.2",
   "language": "en",
   "words": [
+    "acked",
+    "backpressure",
     "CCLA",
     "CODEOWNER",
     "cooldown",
     "deadletter",
+    "elif",
     "ICLA",
     "kernelsam",
+    "Khepri",
+    "mnesia",
     "rabbitmq",
     "Senzing",
     "stackoverflow"
